@@ -1,4 +1,4 @@
-use std::io::{Result, Error};
+use std::io::{Result, Error, ErrorKind};
 use std::ffi::{OsStr, OsString, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
@@ -9,11 +9,25 @@ use std::iter;
 use std::env;
 use std::cell::RefCell;
 
-use libc;
+use nix::{self, libc, unistd};
 
 use os_common::{ExitStatus, StandardStream, Undropped};
 
-pub use libc::ECHILD;
+pub use nix::libc::{
+    ECHILD,
+    WNOHANG,
+    SIGTERM,
+    SIGKILL,
+    POLLIN,
+    POLLOUT,
+    POLLERR,
+    POLLHUP,
+    POLLPRI,
+    POLLNVAL,
+    F_GETFD,
+    F_SETFD,
+    FD_CLOEXEC,
+};
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
@@ -22,16 +36,26 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     Ok(num)
 }
 
+fn map_nix_err(err: nix::Error) -> Error {
+    match err {
+        nix::Error::InvalidPath => Error::new(ErrorKind::Other, "invalid path"),
+        nix::Error::Sys(errno) => Error::from_raw_os_error(errno as isize as i32),
+    }
+}
+
 pub fn pipe() -> Result<(File, File)> {
-    let mut fds = [0 as libc::c_int; 2];
-    check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
+    let (read, write) = unistd::pipe().map_err(map_nix_err)?;
+
     Ok(unsafe {
-        (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1]))
+        (File::from_raw_fd(read), File::from_raw_fd(write))
     })
 }
 
 pub fn fork() -> Result<u32> {
-    check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
+    unistd::fork().map(|result| match result {
+        unistd::ForkResult::Parent { child } => child as u32,
+        unistd::ForkResult::Child => 0
+    }).map_err(map_nix_err)
 }
 
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
@@ -260,8 +284,6 @@ pub fn _exit(status: u8) -> ! {
     unsafe { libc::_exit(status as libc::c_int) }
 }
 
-pub const WNOHANG: i32 = libc::WNOHANG;
-
 pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     let mut status = 0 as libc::c_int;
     let pid = check_err(unsafe {
@@ -283,18 +305,12 @@ fn decode_exit_status(status: i32) -> ExitStatus {
     }
 }
 
-pub use libc::{SIGTERM, SIGKILL};
-
 pub fn kill(pid: u32, signal: i32) -> Result<()> {
     check_err(unsafe {
         libc::kill(pid as libc::c_int, signal)
     })?;
     Ok(())
 }
-
-pub const F_GETFD: i32 = libc::F_GETFD;
-pub const F_SETFD: i32 = libc::F_SETFD;
-pub const FD_CLOEXEC: i32 = libc::FD_CLOEXEC;
 
 pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
     check_err(unsafe {
@@ -363,15 +379,6 @@ impl PollFd {
         return self.0.revents & mask != 0
     }
 }
-
-pub use libc::{
-    POLLIN,
-    POLLOUT,
-    POLLERR,
-    POLLHUP,
-    POLLPRI,
-    POLLNVAL,
-};
 
 pub fn poll(fds: &mut [PollFd], timeout: Option<u32>) -> Result<usize> {
     let cnt;

@@ -12,8 +12,8 @@ Execution of child processes and pipelines, inspired by Python's subprocess
 module, with Rust-specific extensions.
 """
 
-[dependencies]
-libc = "0.2"
+[target.'cfg(unix)'.dependencies]
+nix = "0.8.1"
 
 [target.'cfg(windows)'.dependencies]
 crossbeam = "0.2.10"

@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
 use super::super::unix::PopenExt;
 
-use libc;
+use nix::libc;
 
 #[test]
 fn err_terminate() {

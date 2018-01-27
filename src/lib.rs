@@ -74,7 +74,8 @@
 
 #![warn(missing_docs)]
 
-extern crate libc;
+#[cfg(unix)]
+extern crate nix;
 
 #[cfg(windows)]
 extern crate kernel32;
